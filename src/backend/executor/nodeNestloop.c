@@ -57,21 +57,45 @@
  * ----------------------------------------------------------------
  */
 
+static inline TupleTableSlot *duplicateSlot(TupleTableSlot *slot) {
+	TupleTableSlot *ret = MakeSingleTupleTableSlot(slot->tts_tupleDescriptor);
+	ExecCopySlot(ret, slot);
+
+	return ret;
+}
+
 static inline TupleTableSlot **fetchNextBlock(PlanState *plan) {
 	/* NEVER set outerTupleSlots[BLOCK_SIZE] to value other than NULL, it's the terimiator of the loop! */
-	static TupleTableSlot *blockData[BLOCK_SIZE + 1] = { NULL };
-	for (unsigned long idx = 0; idx < BLOCK_SIZE; ++ idx) {
-		blockData[idx] = ExecProcNode(plan);
-		if (TupIsNull(blockData[idx])) {
+	TupleTableSlot **blockData = palloc(sizeof(TupleTableSlot *) * (BLOCK_SIZE + 1));
+	TupleTableSlot *data;
+	blockData[BLOCK_SIZE] = NULL;
+	unsigned long idx;
+	elog(DEBUG1, "fetchNextBlock");
+	for (idx = 0; idx < BLOCK_SIZE; ++ idx) {
+		data = ExecProcNode(plan);
+		if (TupIsNull(data)) {
+			blockData[idx] = NULL;
 			if (idx == 0) {
-				ENL1_printf("no outer tuple, ending join");
+				elog(DEBUG1, "end of plan");
 				return NULL;
 			} else {
+				elog(DEBUG1, "blockSize: %lu", idx);
 				return blockData;
 			}
 		}
+		blockData[idx] = duplicateSlot(data);
+		// elog(DEBUG1, "heapdata: %lu", blockData[idx]->tts_tuple);
 	}
+	elog(DEBUG1, "fullBlock: %lu", idx);
 	return blockData;
+}
+
+static inline void freeBlock(TupleTableSlot **block) {
+	void *ptr = block;
+	for ( ;!TupIsNull(*block); ++ block) {
+		ExecDropSingleTupleTableSlot(*block);
+	}
+	pfree(ptr);
 }
 
 TupleTableSlot *
@@ -80,7 +104,7 @@ ExecNestLoop(NestLoopState *node)
 	NestLoop   *nl;
 	PlanState  *innerPlan;
 	PlanState  *outerPlan;
-	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *outerTupleSlot = NULL;
 	TupleTableSlot *innerTupleSlot;
 	List	   *joinqual;
 	List	   *otherqual;
@@ -108,7 +132,6 @@ ExecNestLoop(NestLoopState *node)
 	{
 		TupleTableSlot *result;
 		ExprDoneCond isDone;
-
 		result = ExecProject(node->js.ps.ps_ProjInfo, &isDone);
 		if (isDone == ExprMultipleResult)
 			return result;
@@ -138,12 +161,21 @@ ExecNestLoop(NestLoopState *node)
 		if (node->nl_NeedNewOuter)
 		{
 			ENL1_printf("getting new outer tuples");
-			outerTupleSlot = *(++ econtext->ecxt_outertuples);
+			if (econtext->ecxt_outertuples) {
+				outerTupleSlot = *(++ econtext->ecxt_outertuples);
+				// elog(DEBUG1, "Next item");
+			}
 			if (TupIsNull(outerTupleSlot)) {
+				// elog(DEBUG1, "New block");
+				if (econtext->ecxt_outertuples_head) {
+					freeBlock(econtext->ecxt_outertuples_head);
+					if (econtext->ecxt_outertuples - (TupleTableSlot **)econtext->ecxt_outertuples_head != BLOCK_SIZE) return NULL;
+				}
 				if ((econtext->ecxt_outertuples = fetchNextBlock(outerPlan)) == NULL) {
 					ENL1_printf("no outer tuple, ending join");
 					return NULL;
 				}
+				econtext->ecxt_outertuples_head = econtext->ecxt_outertuples;
 				outerTupleSlot = *econtext->ecxt_outertuples;
 			}
 
@@ -157,6 +189,7 @@ ExecNestLoop(NestLoopState *node)
 			}
 
 			ENL1_printf("saving new outer tuple information");
+			econtext->ecxt_outertuple = outerTupleSlot;
 			node->nl_NeedNewOuter = false;
 			node->nl_MatchedOuter = false;
 

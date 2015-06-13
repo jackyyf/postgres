@@ -117,6 +117,7 @@ typedef struct ExprContext
 	TupleTableSlot *ecxt_innertuple;
 	TupleTableSlot *ecxt_outertuple;
 	TupleTableSlot **ecxt_outertuples;
+	void *ecxt_outertuples_head;
 
 	/* Memory contexts for expression evaluation --- see notes above */
 	MemoryContext ecxt_per_query_memory;
