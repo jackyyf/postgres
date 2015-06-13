@@ -358,8 +358,6 @@ ExecProcNode(PlanState *node)
 	if (node->instrument)
 		InstrStartNode(node->instrument);
 
-	// elog(DEBUG1, "NodeType: %d", nodeTag(node));
-
 	switch (nodeTag(node))
 	{
 			/*
@@ -438,7 +436,6 @@ ExecProcNode(PlanState *node)
 			 * join nodes
 			 */
 		case T_NestLoopState:
-			// elog(DEBUG1, "FIRE!!!");
 			result = ExecNestLoop((NestLoopState *) node);
 			break;
 
