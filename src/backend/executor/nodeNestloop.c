@@ -56,6 +56,24 @@
  *			   are prepared to return the first tuple.
  * ----------------------------------------------------------------
  */
+
+static inline TupleTableSlot **fetchNextBlock(PlanState *plan) {
+	/* NEVER set outerTupleSlots[BLOCK_SIZE] to value other than NULL, it's the terimiator of the loop! */
+	static TupleTableSlot *blockData[BLOCK_SIZE + 1] = { NULL };
+	for (unsigned long idx = 0; idx < BLOCK_SIZE; ++ idx) {
+		blockData[idx] = ExecProcNode(plan);
+		if (TupIsNull(blockData[idx])) {
+			if (idx == 0) {
+				ENL1_printf("no outer tuple, ending join");
+				return NULL;
+			} else {
+				return blockData;
+			}
+		}
+	}
+	return blockData;
+}
+
 TupleTableSlot *
 ExecNestLoop(NestLoopState *node)
 {
@@ -119,8 +137,15 @@ ExecNestLoop(NestLoopState *node)
 		 */
 		if (node->nl_NeedNewOuter)
 		{
-			ENL1_printf("getting new outer tuple");
-			outerTupleSlot = ExecProcNode(outerPlan);
+			ENL1_printf("getting new outer tuples");
+			outerTupleSlot = *(++ econtext->ecxt_outertuples);
+			if (TupIsNull(outerTupleSlot)) {
+				if ((econtext->ecxt_outertuples = fetchNextBlock(outerPlan)) == NULL) {
+					ENL1_printf("no outer tuple, ending join");
+					return NULL;
+				}
+				outerTupleSlot = *econtext->ecxt_outertuples;
+			}
 
 			/*
 			 * if there are no more outer tuples, then the join is complete..
@@ -132,7 +157,6 @@ ExecNestLoop(NestLoopState *node)
 			}
 
 			ENL1_printf("saving new outer tuple information");
-			econtext->ecxt_outertuple = outerTupleSlot;
 			node->nl_NeedNewOuter = false;
 			node->nl_MatchedOuter = false;
 
@@ -439,3 +463,5 @@ ExecReScanNestLoop(NestLoopState *node)
 	node->nl_NeedNewOuter = true;
 	node->nl_MatchedOuter = false;
 }
+
+

@@ -21,4 +21,6 @@ extern TupleTableSlot *ExecNestLoop(NestLoopState *node);
 extern void ExecEndNestLoop(NestLoopState *node);
 extern void ExecReScanNestLoop(NestLoopState *node);
 
+#define BLOCK_SIZE 1024
+
 #endif   /* NODENESTLOOP_H */
